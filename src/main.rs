@@ -14,9 +14,10 @@ use std::path::Path;
 use std::fs::File;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::process::Command;
+use std::io::{BufReader, BufRead};
 
 static DB_PATH: &str = "db.sqlite";
-static INIT_PATH: &str = "init.json";
+static WALLETS_PATH: &str = "wallets.csv";
 static AUDIO_PATH: &str = "siren.mp3";
 
 fn get_time() -> u64 {
@@ -78,31 +79,28 @@ fn get_last_height(connection: &Connection) -> Option<u32> {
     }
 }
 
-fn insert_initial_list(connection: &Connection) {
-    match File::open(INIT_PATH) {
+fn update_scrape_list(connection: &Connection) {
+    match File::open(WALLETS_PATH) {
         Ok(file) => {
-            let json: serde_json::Value = serde_json::from_reader(file).unwrap();
-            match json {
-                serde_json::Value::Array(array) => {
-                    for item in array {
-                        println!("[.] Inserting {} ({})", item["name"], item["address"]);
-                        let _ = connection.execute(
-                            "INSERT INTO scrape (name, address) VALUES (?1, ?2)",
-                            (&item["name"].as_str(), &item["address"].as_str())
-                        ).unwrap();
-                    }
-                }
-                _ => {
-                    println!("Value is not an array");
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                let line = line.expect("Error reading line");
+                let entries: Vec<&str> = line.split(",").collect();
+                let query = connection.execute(
+                    "INSERT INTO scrape (name, address) VALUES (?1, ?2)",
+                    (entries[0], entries[1])
+                );
+                match query {
+                    Ok(_) => println!("[+] Added new wallet {} ({})", entries[0], entries[1]),
+                    Err(_) => ()
                 }
             }
         },
-        _ => println!("[!] Initial peer list at {} was not found. Skipping.", INIT_PATH)
+        _ => println!("[!] Scrape list at {} was not found. Skipping.", WALLETS_PATH)
     }
 }
 
 fn create_db() -> Connection {
-
     if !Path::new(DB_PATH).exists() {
         println!("[.] Creating new sqlite database at {}", DB_PATH);
         let connection: Connection = Connection::open(DB_PATH).unwrap();
@@ -133,8 +131,6 @@ fn create_db() -> Connection {
             );"#,
             ())
             .unwrap();
-        println!("[.] Inserting initial scrape list from {}", INIT_PATH);
-        insert_initial_list(&connection);
         return connection
     } else {
         let connection: Connection = Connection::open(DB_PATH).unwrap();
@@ -183,6 +179,7 @@ async fn main() {
     loop {
 
         let connection: Connection = create_db();
+        let _ = update_scrape_list(&connection);
         let url = "http://127.0.0.1:8080";
         let mut headers = header::HeaderMap::new();
         headers.insert("Accept", header::HeaderValue::from_static("application/json"));
