@@ -152,22 +152,28 @@ async fn fetch_payload(http_client: &Client, url: &str) -> serde_json::Value {
 
 async fn post_webhook(http_client: &Client, title: String, fields: serde_json::Value) {
     dotenv::dotenv().ok();
-    let webhook_url = dotenv::var("WEBHOOK").unwrap();
-    let raw_body: serde_json::Value = serde_json::json!({
-        "embeds": [
-            {
-                "title": title,
-                "description": "Activity found in wallets being watched.",
-                "color": 15258703,
-                "fields": fields
-            }
-        ]
-    });
-    let _ = http_client.post(webhook_url)
-        .json(&raw_body)
-        .send()
-        .await
-        .unwrap();
+    let webhook_url = dotenv::var("WEBHOOK");
+    match webhook_url {
+        Ok(url) => {
+            let raw_body: serde_json::Value = serde_json::json!({
+                "embeds": [
+                    {
+                        "title": title,
+                        "description": "Activity found in wallets being watched.",
+                        "color": 15258703,
+                        "fields": fields
+                    }
+                ]
+            });
+            let _ = http_client.post(url)
+                .json(&raw_body)
+                .send()
+                .await
+                .unwrap();
+        },
+        Err(_) => ()
+    }
+
 }
 
 #[tokio::main]
