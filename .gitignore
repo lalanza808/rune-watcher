@@ -1,4 +1,4 @@
 /target
-init.json
+wallets.csv
 db.sqlite
 .env

@@ -18,7 +18,7 @@ use std::io::{BufReader, BufRead};
 
 static DB_PATH: &str = "db.sqlite";
 static WALLETS_PATH: &str = "wallets.csv";
-static AUDIO_PATH: &str = "siren.mp3";
+static AUDIO_PATH: &str = "sound.mp3";
 
 fn get_time() -> u64 {
     let start_time = SystemTime::now()
