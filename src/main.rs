@@ -21,11 +21,10 @@ static WALLETS_PATH: &str = "wallets.csv";
 static AUDIO_PATH: &str = "sound.mp3";
 
 fn get_time() -> u64 {
-    let start_time = SystemTime::now()
+    return SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Failed to get start time");
-    let seconds: u64 = start_time.as_secs();
-    return seconds
+        .expect("Failed to get start time")
+        .as_secs();
 }
 
 fn get_scrape_list(connection: &Connection) -> Vec<ScrapeWallet> {
@@ -116,6 +115,7 @@ fn create_db() -> Connection {
             CREATE TABLE balances (
                 id INTEGER PRIMARY KEY,
                 timestamp INTEGER NOT NULL,
+                height INTEGER NOT NULL,
                 address TEXT NOT NULL,
                 ticker TEXT NOT NULL,
                 symbol TEXT NOT NULL,
@@ -169,15 +169,11 @@ async fn post_webhook(http_client: &Client, title: String, fields: serde_json::V
         },
         Err(_) => ()
     }
-
 }
 
 #[tokio::main]
 async fn main() {
-
-
     loop {
-
         let connection: Connection = create_db();
         let _ = update_scrape_list(&connection);
         let url = "http://127.0.0.1:8080";
@@ -194,7 +190,6 @@ async fn main() {
         let ready_to_scan = match last_height {
             Some(lh) => {
                 if status.height <= lh {
-                    // println!("[!] Last checked block height {} matches current block height, waiting", lh);
                     false
                 } else {
                     true
@@ -206,7 +201,6 @@ async fn main() {
         };
 
         if ready_to_scan {
-            // println!("[+] Scanning wallets.");
             let _ = &connection.execute(
                 "INSERT INTO state (height, inscriptions) VALUES (?1, ?2)",
                 (
@@ -215,20 +209,21 @@ async fn main() {
                 )
             ).unwrap();
 
-            // println!("[.] Checking wallets");
+            // loop wallets and update balances
+            let timestamp: u64 = get_time();
             let wallets: Vec<ScrapeWallet> = get_scrape_list(&connection);
             let mut deltas: u32 = 0;
             let mut message_fields: Vec<serde_json::Value> = Vec::new();
             for wallet in wallets {
-                let timestamp: u64 = get_time();
                 let mut rune_balances: Vec<String> = Vec::new();
                 let response: serde_json::Value = fetch_payload(&client, format!("{}/address/{}", url, wallet.address).as_str()).await;
                 let payload: AddressPayload = serde_json::from_value(response).unwrap();
                 for rune in payload.runes_balances {
                     let _ = &connection.execute(
-                        "INSERT INTO balances (timestamp, address, ticker, symbol, balance) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        "INSERT INTO balances (timestamp, height, address, ticker, symbol, balance) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         (
                             timestamp,
+                            status.height,
                             wallet.address.as_str(),
                             rune.ticker.as_str(),
                             rune.symbol.unwrap_or_default(),
@@ -252,14 +247,16 @@ async fn main() {
                     message_fields.push(serde_json::json!({
                         "name": format!("{} ({})", wallet.address, wallet.name),
                         "value": rune_balances.join("\n")
-                    }))
+                    }));
                 }
             }
+            // play sound if balance changes
             if deltas > 0 {
                 let _ = Command::new("mplayer")
                     .args([AUDIO_PATH])
                     .output();
             }
+            // post to discord webhook
             if message_fields.len() > 0 {
                 let _ = post_webhook(
                     &client,
@@ -267,10 +264,17 @@ async fn main() {
                     serde_json::Value::Array(message_fields)
                 ).await;
             }
+            // clean up old entries
+            if last_height.unwrap_or(0) > 0 {
+                // println!("Deleting entries previous last height {}", last_height.unwrap());
+                let _ = &connection.execute(
+                    format!("DELETE FROM balances WHERE height < {}", last_height.unwrap()).as_str(),
+                    ()
+                ).unwrap();
+            }
         }
 
         // println!("[.] Sleeping.");
         sleep(Duration::from_millis(10000)).await;
     }
-
 }
